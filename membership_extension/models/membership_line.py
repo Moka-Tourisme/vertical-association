@@ -19,9 +19,7 @@ class MembershipLine(models.Model):
     )
     date_from = fields.Date(readonly=False)
     date_to = fields.Date(readonly=False)
-    state = fields.Selection(
-        compute="_compute_state", inverse="_inverse_state", store=True, readonly=False
-    )
+    state = fields.Selection(compute="_compute_state", readonly=False)
     partner = fields.Many2one(ondelete="restrict")
     member_price = fields.Float(
         compute="_compute_member_price", readonly=False, store=True
@@ -51,21 +49,20 @@ class MembershipLine(models.Model):
                     self.date_to = date_to
 
     def _compute_state(self):
-        # pylint: disable=missing-return
-        for line in self:
-            if isinstance(line.id, models.NewId) or not line.account_invoice_id:
-                line.state = line.state or "none"
-            elif (
-                line.account_invoice_id.state == "posted"
-                and line.account_invoice_id.payment_state == "reversed"
-            ):
-                line.state = "canceled"
-            else:
-                return super(MembershipLine, line)._compute_state()
-
-    # Empty method _inverse_state
-    def _inverse_state(self):
-        return True  # pragma: no cover
+        no_invoice_lines = self.filtered(
+            lambda line: isinstance(line.id, models.NewId)
+            or not line.account_invoice_id
+        )
+        cancelled_lines = self.filtered(
+            lambda line: line.account_invoice_id.state == "posted"
+            and line.account_invoice_id.payment_state == "reversed"
+        )
+        cancelled_lines.state = "canceled"
+        for line in no_invoice_lines:
+            line.state = line.state or "none"
+        return super(
+            MembershipLine, self - no_invoice_lines - cancelled_lines
+        )._compute_state()
 
     def unlink(self):
         allow = self.env.context.get("allow_membership_line_unlink", False)
